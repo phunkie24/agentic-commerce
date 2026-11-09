@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:8000']
+
+  - job_name: 'agent-orchestrator'
+    static_configs:
+      - targets: ['agent-orchestrator:8001']
+
+  - job_name: 'product-service'
+    static_configs:
+      - targets: ['product-service:8002']
+
+  - job_name: 'order-service'
+    static_configs:
+      - targets: ['order-service:8003']
+
+  - job_name: 'recommendation-service'
+    static_configs:
+      - targets: ['recommendation-service:8004']
+
+  - job_name: 'analytics-service'
+    static_configs:
+      - targets: ['analytics-service:8005']

@@ -1,0 +1,226 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_WS_URL=ws://localhost:8000
+    depends_on:
+      - api-gateway
+    networks:
+      - agentic-commerce
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ./backend/gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://agenticcommerce:${DB_PASSWORD}@postgres:5432/agenticcommerce
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    networks:
+      - agentic-commerce
+    restart: unless-stopped
+
+  agent-orchestrator:
+    build:
+      context: ./backend/orchestrator
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql://agenticcommerce:${DB_PASSWORD}@postgres:5432/agenticcommerce
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - PINECONE_ENVIRONMENT=${PINECONE_ENVIRONMENT}
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - agentic-commerce
+    restart: unless-stopped
+
+  product-service:
+    build:
+      context: ./backend/services/product
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - DATABASE_URL=postgresql://agenticcommerce:${DB_PASSWORD}@postgres:5432/agenticcommerce
+      - REDIS_URL=redis://redis:6379
+      - SERVICE_PORT=8002
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - agentic-commerce
+    restart: unless-stopped
+
+  order-service:
+    build:
+      context: ./backend/services/order
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - DATABASE_URL=postgresql://agenticcommerce:${DB_PASSWORD}@postgres:5432/agenticcommerce
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - SERVICE_PORT=8003
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - agentic-commerce
+    restart: unless-stopped
+
+  recommendation-service:
+    build:
+      context: ./backend/services/recommendation
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - DATABASE_URL=postgresql://agenticcommerce:${DB_PASSWORD}@postgres:5432/agenticcommerce
+      - REDIS_URL=redis://redis:6379
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SERVICE_PORT=8004
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - agentic-commerce
+    restart: unless-stopped
+
+  analytics-service:
+    build:
+      context: ./backend/services/analytics
+      dockerfile: Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      - DATABASE_URL=postgresql://agenticcommerce:${DB_PASSWORD}@postgres:5432/agenticcommerce
+      - REDIS_URL=redis://redis:6379
+      - SERVICE_PORT=8005
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - agentic-commerce
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=agenticcommerce
+      - POSTGRES_USER=agenticcommerce
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - agentic-commerce
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenticcommerce"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - agentic-commerce
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - agentic-commerce
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - agentic-commerce
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+    networks:
+      - agentic-commerce
+    restart: unless-stopped
+
+networks:
+  agentic-commerce:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
